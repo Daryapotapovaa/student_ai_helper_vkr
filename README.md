@@ -3,18 +3,13 @@
 
 ```
 git clone https://github.com/moevm/bsc_Potapova.git  
-cd lsp-proxy-demo
+cd student-ai-helper
 npm install
 ```
 
 **2. Сборка проекта**
 ```
 npm run compile
-```
-Или отдельно
-```
-npm run compile:client    # Клиентская часть
-npm run compile:server    # LSP-сервер
 ```
 
 **3. Запуск в режиме разработки**
@@ -28,26 +23,23 @@ npm run compile:server    # LSP-сервер
 Откроется новое окно VS Code с заголовком [Extension Development Host], где будет активен плагин.
 
 ## Тестирование функциональности
-**Тест 1: Команда Hello World**
 
 В Development Host создайте файл test.py
 
+Напишите код с какой-либо ошибкой. Например:
+
+```
+def func()
+  print('Hello')
+```
+
 Нажмите Ctrl+Shift+P
 
-Введите "Hello World"
+Выберете Student AI: Insert Help
 
-Появится сообщение 'Hello World from LSP Proxy Demo!' в сплывающем окне, а также на месте курсора вставится комментарий:
-```
-# Hello World from LSP Proxy!
-```
-**Тест 2: Проверка LSP соединения**
+ На месте курсора появится комментарий с советом от AI-модели
 
-Откройте Developer Tools (Help → Toggle Developer Tools)
+ ## Отслеживание логов
+  Для отслеживания логов об инициализации сервера необходимо в узле разработки расширения в разделе Выходные данные в качестве задачи выбрать Student AI Server. 
 
-Перейдите на вкладку Console
 
-Должны отображаться логи:
-```
-LSP Client: Hello! Connected to server
-LSP Server: Initialized
-```
