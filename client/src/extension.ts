@@ -50,13 +50,23 @@ export function activate(context: ExtensionContext) {
         }
 
         try {
-            const aiResponse = await client.sendRequest<string>('custom/getStudentHelp', {});
-            editor.edit(editBuilder => {
-                editBuilder.insert(editor.selection.active, aiResponse);
-            });
-        } catch (error) {
-            window.showErrorMessage(`Ошибка: ${error}`);
-        }
+			// Получаем ссылку на текущий документ (URI)
+			// URI - это уникальный адрес файла в системе (например, file:///c:/projects/test.py)
+			const docUri = editor.document.uri.toString();
+
+			// Отправляем запрос на сервер и ПЕРЕДАЕМ этот URI
+			const aiResponse = await client.sendRequest<string>('custom/getStudentHelp', {
+				uri: docUri 
+			});
+
+			// Вставляем ответ
+			editor.edit(editBuilder => {
+				editBuilder.insert(editor.selection.active, aiResponse);
+			});
+
+		} catch (error) {
+			window.showErrorMessage(`Ошибка общения с LSP: ${error}`);
+		}
     });
 
     context.subscriptions.push(disposable);
