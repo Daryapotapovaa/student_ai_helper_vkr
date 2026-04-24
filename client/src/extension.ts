@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { workspace, ExtensionContext, commands, window } from 'vscode';
+import { workspace, ExtensionContext, commands, window, Position, Selection } from 'vscode';
 import {
     LanguageClient,
     LanguageClientOptions,
@@ -14,7 +14,7 @@ export function activate(context: ExtensionContext) {
         path.join('server', 'out', 'server.js')
     );
 
-    const debugOptions = { execArgv: ['--nolazy', '--inspect=6009'] };
+    const debugOptions = { execArgv:['--nolazy', '--inspect=6009'] };
 
     const serverOptions: ServerOptions = {
         run: { module: serverModule, transport: TransportKind.ipc },
@@ -26,7 +26,7 @@ export function activate(context: ExtensionContext) {
     };
 
     const clientOptions: LanguageClientOptions = {
-        documentSelector: [{ scheme: 'file', language: 'python' }], // Важно: python
+        documentSelector:[{ scheme: 'file', language: 'python' }], // Важно: python
         synchronize: {
             fileEvents: workspace.createFileSystemWatcher('**/.clientrc')
         }
@@ -45,28 +45,51 @@ export function activate(context: ExtensionContext) {
     const disposable = commands.registerCommand('student-ai.insertComment', async () => {
         const editor = window.activeTextEditor;
         if (!editor) {
-            window.showErrorMessage('Открой файл .py!');
+            window.showErrorMessage('Откройте файл .py!');
             return;
         }
 
         try {
-			// Получаем ссылку на текущий документ (URI)
-			// URI - это уникальный адрес файла в системе (например, file:///c:/projects/test.py)
-			const docUri = editor.document.uri.toString();
+            // Получаем ссылку на текущий документ
+            const docUri = editor.document.uri.toString();
 
-			// Отправляем запрос на сервер и ПЕРЕДАЕМ этот URI
-			const aiResponse = await client.sendRequest<string>('custom/getStudentHelp', {
-				uri: docUri 
-			});
+            // Отправляем запрос на сервер
+            const aiResponse = await client.sendRequest<string>('custom/getStudentHelp', {
+                uri: docUri 
+            });
 
-			// Вставляем ответ
-			editor.edit(editBuilder => {
-				editBuilder.insert(editor.selection.active, aiResponse);
-			});
+            if (!aiResponse) return;
+            
+            // Получаем текущую позицию курсора и текущую строку
+            const position = editor.selection.active;
+            const currentLine = editor.document.lineAt(position.line);
+            
+            // Вычисляем отступ
+            const indent = currentLine.text.substring(0, currentLine.firstNonWhitespaceCharacterIndex);
+            
+            // Формируем текст для вставки
+            const textToInsert = `\n${indent}${aiResponse}`;
 
-		} catch (error) {
-			window.showErrorMessage(`Ошибка общения с LSP: ${error}`);
-		}
+            // Вставляем текст
+            await editor.edit(editBuilder => {
+                editBuilder.insert(currentLine.range.end, textToInsert);
+            });
+
+            // Вычисляем новую позицию курсора
+            const linesAdded = textToInsert.split('\n');
+            const lastLineLength = linesAdded[linesAdded.length - 1].length;
+            
+            const newPosition = new Position(
+                position.line + linesAdded.length - 1, 
+                lastLineLength
+            );
+            
+            // Снимаем выделение и ставим курсор на новую позицию
+            editor.selection = new Selection(newPosition, newPosition);
+
+        } catch (error) {
+            window.showErrorMessage(`Ошибка общения с LSP: ${error}`);
+        }
     });
 
     context.subscriptions.push(disposable);
