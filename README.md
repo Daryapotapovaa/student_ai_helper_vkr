@@ -5,6 +5,9 @@
 ```
 git clone https://github.com/moevm/bsc_Potapova.git  
 npm install
+cd server
+npm install
+cd ..
 ```
 **2. Создание файла .env**
 
@@ -51,7 +54,7 @@ def func()
 
 Нажмите Ctrl+Shift+P
 
-Выберете Student AI: Insert Help
+Выберете **Student AI: Insert Help**
 
  На месте курсора появится комментарий с советом от AI-модели
 
