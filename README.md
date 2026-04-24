@@ -1,18 +1,34 @@
 ## Установка и запуск
 **1. Клонирование и установка**
 
+В корне проекта:
 ```
 git clone https://github.com/moevm/bsc_Potapova.git  
-cd student-ai-helper
 npm install
 ```
+**2. Создание файла .env**
 
-**2. Сборка проекта**
+В корне проекта создайте файл .env:
+```
+# Для OpenRouter
+MODEL_NAME=openai/gpt-oss-20b:free,google/gemma-7b-it:free,anthropic/claude-3-haiku:free,nvidia/nemotron-3-super-120b-a12b:free
+API_KEY=sk-or-v1-api_key
+
+# При переключении на локальный сервер, раскомментируйте эту строку:
+# API_BASE_URL=http://localhost:1234/v1
+
+# Режим работы плагина: 
+# 'advice' - только текстовые подсказки
+# 'code' - подсказки с примером исправленного кода
+HELP_MODE=code
+```
+
+**3. Сборка проекта**
 ```
 npm run compile
 ```
 
-**3. Запуск в режиме разработки**
+**4. Запуск в режиме разработки**
 
 Откройте проект в VS Code
 
