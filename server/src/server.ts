@@ -3,7 +3,15 @@ import {
     TextDocuments,
     ProposedFeatures,
     InitializeParams,
-    TextDocumentSyncKind
+    TextDocumentSyncKind,
+    Diagnostic,
+    DiagnosticSeverity,
+    CodeAction,
+    CodeActionKind,
+    CodeActionParams,
+    TextEdit,
+    WorkspaceEdit,
+    Position
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import OpenAI from 'openai';
@@ -28,86 +36,146 @@ const openai = new OpenAI({
 
 connection.onInitialize((params: InitializeParams) => {
     connection.console.log(`[LSP Server] Инициализация... URL: ${API_BASE_URL}`);
-    connection.console.log(`[LSP Server] Загружен список моделей (Fallback): ${MODELS_LIST.join(' -> ')}`);
-    
     return {
         capabilities: {
             textDocumentSync: TextDocumentSyncKind.Incremental,
-            completionProvider: { resolveProvider: true }
+            codeActionProvider: true
         }
     };
 });
 
-connection.onRequest('custom/getStudentHelp', async (params: any) => {
-    connection.console.log('[LSP Server] Запрос получен. Ожидание ответа...');
-
-    const fileUri = params.uri;
-    const document = documents.get(fileUri);
-
-    if (!document) return '# Ошибка: файл не найден.';
-
-    const studentCode = document.getText();
-
-    // Считывааем режим работы из .env
+// Проверка кода при сохранении файла
+documents.onDidSave(async (change) => {
+    connection.console.log(`[LSP Server] Файл сохранен. Запуск ИИ-проверки...`);
+    const document = change.document;
     const HELP_MODE = process.env.HELP_MODE || 'advice';
 
-    // Формируем промпты для разных режимов
-    const systemPromptAdvice = `
-    Ты — помощник преподавателя Python.
-    Найди ошибку в коде или дай совет студенту, как продолжить.
-    Ответь одним предложением на русском языке.
-    Начни ответ с символа #. Никакого кода не пиши, только текстовую подсказку.
+    // Нумеруем строки кода
+    const lines = document.getText().split('\n');
+    const numberedCode = lines.map((line, index) => `${index}: ${line}`).join('\n');
+
+    // Системный промпт
+    const systemPrompt = `
+        Ты — опытный, терпеливый преподаватель Python и наставник для новичков.
+        Твоя задача — найти главную ошибку или логическую недоработку в коде студента.
+        Все объяснения пиши только на русском языке.
+        Пользователь пришлет код с номерами строк.
+        
+        ПРАВИЛА ДЛЯ ФОРМИРОВАНИЯ ПОДСКАЗКИ (поле "message"):
+        1. КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ дублировать стандартные ошибки интерпретатора Python (например, "SyntaxError", "NameError").
+        2. Объясни суть проблемы простым, человеческим языком. Начни с того, ЧТО именно не так.
+        3. Кратко объясни ПОЧЕМУ это важно. Напомни правило языка Python (например, "В Python все блоки внутри цикла должны быть выделены отступом").
+        4. Дай наводящий совет, как это исправить, но НЕ пиши сам исправленный код внутри текста сообщения.
+        5. Объем сообщения: 2-3 ясных предложения.
+        
+        Ты ДОЛЖЕН ответить СТРОГО в формате JSON без markdown разметки и лишнего текста:
+        {
+        "hasError": true или false,
+        "line": <номер строки с ошибкой (число)>,
+        "message": "<подробное педагогическое объяснение ошибки и совет>",
+        "suggestedCode": "<исправленный фрагмент кода или null>"
+        }
+        Если ошибок нет, верни {"hasError": false}.
     `;
 
-    const systemPromptCode = `
-    Ты — помощник преподавателя Python.
-    Найди ошибку в коде или логическое незавершение и предложи исправленный вариант.
-    Формат ответа: сначала краткий комментарий с объяснением (начни строку с #), а на следующей строке напиши сам исправленный код только для того фрагмента, где была найдена ошибка.
-    Не пиши приветствий и лишнего текста, выдай только комментарий и код.
-    `;
-
-    // Выбираем нужный промпт
-    const systemPrompt = HELP_MODE === 'code' ? systemPromptCode : systemPromptAdvice;
-
-    let lastError: any = null;
-
-    // Обращение к моделям
+    let aiAnswerRaw = '';
     for (const currentModel of MODELS_LIST) {
         try {
-            connection.console.log(`[LSP Server] Попытка генерации с моделью: ${currentModel} (Режим: ${HELP_MODE})`);
-            
-            const completion = await openai.chat.completions.create(
-                {
-                    model: currentModel,
-                    messages:[
-                        { role: "system", content: systemPrompt },
-                        { role: "user", content: studentCode }
-                    ]
-                },
-                { timeout: 10000 }
-            );
+            const completion = await openai.chat.completions.create({
+                model: currentModel,
+                messages:[
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: numberedCode }
+                ]
+            }, { timeout: 15000 });
 
-            const aiAnswer = completion.choices[0]?.message?.content || '# Ошибка: пустой ответ от ИИ';
-            connection.console.log(`[LSP Server] Успешный ответ получен!`);
-            
-            return aiAnswer;
-
+            aiAnswerRaw = completion.choices[0]?.message?.content || '';
+            break; // Выход из цикла при успешном ответе
         } catch (error: any) {
-            connection.console.log(`[Warning] Модель ${currentModel} недоступна: ${error.message}.`);
-            lastError = error;
+            connection.console.log(`[Warning] Ошибка модели ${currentModel}: ${error.message}`);
         }
     }
 
-    if (lastError && lastError.message.includes('ECONNREFUSED')) {
-         return `# Ошибка: Локальный сервер ИИ не запущен (${API_BASE_URL}).`;
+    if (!aiAnswerRaw) return;
+
+    try {
+        // Очищаем ответ от markdown
+        const cleanJson = aiAnswerRaw.replace(/```json/g, '').replace(/```/g, '').trim();
+        const aiResult = JSON.parse(cleanJson);
+        connection.console.log(aiResult);
+        // Очищаем подчеркивания при отсутсвии ошибок
+        if (!aiResult.hasError) {
+            connection.sendDiagnostics({ uri: document.uri, diagnostics:[] });
+            return;
+        }
+
+        const errorLine = aiResult.line;
+        
+        // Создаем волнистое подчеркивание
+        const diagnostic: Diagnostic = {
+            severity: DiagnosticSeverity.Warning,
+            range: {
+                start: Position.create(errorLine, 0),
+                end: Position.create(errorLine, lines[errorLine].length)
+            },
+            message: `🤖 ИИ: ${aiResult.message}`,
+            source: 'StudentAI',
+            data: { 
+                mode: HELP_MODE, 
+                message: aiResult.message, 
+                code: aiResult.suggestedCode 
+            }
+        };
+
+        // Отправляем диагностику в VS Code
+        connection.sendDiagnostics({ uri: document.uri, diagnostics: [diagnostic] });
+
+    } catch (e) {
+        connection.console.log(`[Error] Не удалось распарсить JSON от ИИ: ${aiAnswerRaw}`);
     }
-    
-    return `# Ошибка сети: Не удалось получить ответ. Последняя ошибка: ${lastError?.message || 'Неизвестная ошибка'}`;
 });
 
+// Обработка нажатия на лампочку
+connection.onCodeAction((params: CodeActionParams) => {
+    const ourDiagnostics = params.context.diagnostics.filter(d => d.source === 'StudentAI');
+    if (ourDiagnostics.length === 0) return[];
 
-// Заглушки
-connection.onCompletion(() => []);
-connection.onCompletionResolve((item) => item);
+    const actions: CodeAction[] =[];
+    const document = documents.get(params.textDocument.uri);
+    if (!document) return[];
+
+    for (const diagnostic of ourDiagnostics) {
+        const data = diagnostic.data as any; // Извлекаем сохраненные данные от ИИ
+        const errorLineNum = diagnostic.range.start.line;
+        const currentLineText = document.getText({
+            start: Position.create(errorLineNum, 0),
+            end: Position.create(errorLineNum + 1, 0)
+        });
+        
+        // Вычисляем отступ для вставки
+        const indentMatch = currentLineText.match(/^\s*/);
+        const indent = indentMatch ? indentMatch[0] : '';
+
+        if (data.mode === 'code' && data.code) {
+            const action = CodeAction.create(
+                "🛠️ Применить исправление от ИИ",
+                CodeActionKind.QuickFix
+            );
+            // Заменяем текущую строку с ошибкой на исправленный код от ИИ
+            const edit = TextEdit.replace(diagnostic.range, `${indent}${data.code}`);
+            action.edit = { changes: { [params.textDocument.uri]: [edit] } };
+            action.diagnostics = [diagnostic];
+            actions.push(action);
+        }
+    }
+
+    return actions; 
+});
+
+// Очистка ошибок при изменении кода
+documents.onDidChangeContent((change) => {
+    connection.sendDiagnostics({ uri: change.document.uri, diagnostics:[]})})
+
+// Запускаем слушателей
 documents.listen(connection);
 connection.listen();
